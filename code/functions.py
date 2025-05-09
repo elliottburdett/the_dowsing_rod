@@ -1,5 +1,5 @@
-#Included: polyfit2d, mkpol, select_isochrone, fit_bkg, delve_movie_maker, select_cutout, select_stream_cutout, spherical_harmonic_background_fit, movie_maker
-#Included: get_filter_splines, filter_data, table_maker
+#Included: polyfit2d, mkpol, select_isochrone, fit_bkg, delve_movie_maker, select_cutout, select_stream_cutout, spherical_harmonic_background_fit
+#Included: movie_maker, get_filter_splines, filter_data, table_maker, object2mutable, make_it_big, make_gif
 
 #Included: stream data, font properties
 #Imports
@@ -36,6 +36,7 @@ import glob
 import astropy.io.fits as fitsio
 from astropy import table
 from scipy.interpolate import interp1d
+import subprocess
 
 #Polyfit
 def polyfit2d(x, y, f, deg):
@@ -163,13 +164,6 @@ def select_isochrone(mag_g, mag_r, iso_params=[17.0, 12.5, 0.0001], dmu=0.5, C=[
     return idx #Sam: return mk, idk
 
 ## Original Define isochrone functions
-
-font_properties = {'family': 'serif', 'weight': 'bold', 'size': 14}
-
-augie = 'Augustus P. Herrin'
-
-def ian():
-    return 'Good Morning!'
 
 def zach():
     
@@ -547,6 +541,7 @@ def movie_maker(data, mu_start=15, mu_end=18, mu_step=0.5, save=False, show=True
             plt.show()
             
 def get_filter_splines(age, mu, z, abs_mag_min=2.9, app_mag_max = 23.5, color_min=0, color_max=1, dmu=0.5, C=[0.05, 0.1], E=2.):
+    from scipy.interpolate import interp1d
     iso = isochrone_factory('Dotter2016', survey='DES', age=age, distance_modulus=mu, z=z)
     err = lambda x: 0.0010908679647672335 + np.exp((x - 27.091072029215375) / 1.0904624484538419)
     gsel = (iso.mag > abs_mag_min) & (iso.mag + mu < app_mag_max)
@@ -629,3 +624,52 @@ def table_maker(data, mu_start=15, mu_end=18, mu_step=0.5, age=11., z=0.0007, gm
         hpx_array[col_name][np.searchsorted(upix, upix_sel)] = counts_sel # As far as I can tell, this works, but ask Peter
           
     return hpx_array
+
+def object2mutable(vertices, hats_catalog, args):
+    '''
+    Makes table of counts at each mu value across hpx ids
+    
+    vertices: (ra1, ra2, dec1, dec2)
+    hats_catalog: data to work with
+    '''
+    ra1 = vertices[0]
+    ra2 = vertices[1]
+    dec1 = vertices[2]
+    dec2 = vertices[3]
+    catalog_box = hats_catalog.box_search((ra1,ra2),(dec1,dec2)).compute()
+    mu_start, mu_end, mu_step, age, z, gmag, rmag, ra, dec, nside = args
+    small_array = table_maker(data=catalog_box, mu_start=mu_start, mu_end=mu_end, mu_step=mu_step, age=age, z=z, gmag_title=gmag, rmag_title=rmag, ra_title=ra, dec_title=dec, nside=nside)
+    
+    return small_array
+
+def make_it_big(hats_catalog, ra_step, dec_step, args):
+    '''
+    Makes a mu table across all RA and Dec Values given a hats catalog.
+    '''
+    ra_list = np.arange(0, 360, ra_step)
+    dec_list = np.arange(-90, 90, dec_step)
+    small_array_list = []
+    for ra in ra_list:
+        for dec in dec_list:
+            vertices = (ra, ra+ra_step, dec, dec+dec_step)
+            small_array = object2mutable(vertices=vertices, hats_catalog=hats_catalog, args=args)
+            small_array_list.append(small_array)
+            print(f'Loading RA: {vertices[0]} -> {vertices[1]}, DEC: {vertices[2]} -> {vertices[3]}          ', end='\r')
+    big_array = np.concatenate(small_array_list)
+    return big_array
+
+def make_gif(infiles, outfile=None, delay=40, queue='local'):
+    print("Making movie...")
+    infiles = np.atleast_1d(infiles)
+    if not len(infiles):
+        msg = "No input files found"
+        raise ValueError(msg)
+
+    infiles = ' '.join(infiles)
+    if not outfile:
+        outfile = infiles[0].replace('.png', '.gif')
+    cmd = 'convert -delay %i -quality 100 %s %s' % (delay, infiles, outfile)
+    if queue != 'local':
+        cmd = 'csub -q %s ' % (queue) + cmd
+    print(cmd)
+    subprocess.check_call(cmd, shell=True)
